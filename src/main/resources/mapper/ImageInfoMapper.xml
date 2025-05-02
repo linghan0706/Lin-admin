@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd" >
+<mapper namespace="org.lin.lin_admin.module.file.mapper.ImageInfoMapper">
+    
+    <!-- 结果映射 -->
+    <resultMap id="ImageInfoResultMap" type="org.lin.lin_admin.module.file.dto.ImageInfoDTO">
+        <id column="id" property="id" />
+        <result column="path" property="path" />
+        <result column="original_filename" property="originalFilename" />
+        <result column="file_size" property="fileSize" />
+        <result column="width" property="width" />
+        <result column="height" property="height" />
+        <result column="content_type" property="contentType" />
+        <result column="create_time" property="createTime" />
+        <result column="camera_make" property="cameraMake" />
+        <result column="camera_model" property="cameraModel" />
+        <result column="shoot_time" property="shootTime" />
+        <result column="exposure_time" property="exposureTime" />
+        <result column="aperture" property="aperture" />
+        <result column="iso" property="iso" />
+        <result column="focal_length" property="focalLength" />
+        <result column="latitude" property="latitude" />
+        <result column="longitude" property="longitude" />
+        <result column="altitude" property="altitude" />
+    </resultMap>
+    
+    <!-- 插入图片信息 -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO image_info (
+            path, original_filename, file_size, width, height, content_type, 
+            camera_make, camera_model, shoot_time, exposure_time, aperture, 
+            iso, focal_length, latitude, longitude, altitude
+        ) VALUES (
+            #{path}, #{originalFilename}, #{fileSize}, #{width}, #{height}, #{contentType}, 
+            #{cameraMake}, #{cameraModel}, #{shootTime}, #{exposureTime}, #{aperture}, 
+            #{iso}, #{focalLength}, #{latitude}, #{longitude}, #{altitude}
+        )
+    </insert>
+    
+    <!-- 根据ID查询图片信息 -->
+    <select id="findById" resultMap="ImageInfoResultMap">
+        SELECT * FROM image_info WHERE id = #{id}
+    </select>
+    
+    <!-- 根据路径查询图片信息 -->
+    <select id="findByPath" resultMap="ImageInfoResultMap">
+        SELECT * FROM image_info WHERE path = #{path}
+    </select>
+    
+    <!-- 查询所有图片信息 -->
+    <select id="findAll" resultMap="ImageInfoResultMap">
+        SELECT * FROM image_info ORDER BY create_time DESC
+    </select>
+    
+    <!-- 分页查询图片信息 -->
+    <select id="findPage" resultMap="ImageInfoResultMap">
+        SELECT * FROM image_info ORDER BY create_time DESC
+        LIMIT #{offset}, #{limit}
+    </select>
+    
+    <!-- 计算总记录数 -->
+    <select id="count" resultType="int">
+        SELECT COUNT(*) FROM image_info
+    </select>
+    
+    <!-- 删除图片信息 -->
+    <delete id="delete">
+        DELETE FROM image_info WHERE id = #{id}
+    </delete>
+    
+</mapper> 

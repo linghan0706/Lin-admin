@@ -1,0 +1,134 @@
+# 管理后台登录接口设计
+
+## 概述
+为博客管理后台设计一个基于 SSM 框架（Spring、Spring MVC、MyBatis）的登录接口。该接口用于管理员身份验证，允许通过用户名和密码登录，成功后返回一个认证令牌（建议使用 JSON Web Token，JWT），用于访问受保护的管理功能，如文章的增删改查和评论查看。
+
+## 接口详情
+
+### 端点
+`POST /admin/login`
+
+### 描述
+该接口处理管理员的登录请求，验证提供的用户名和密码是否有效。验证成功后，返回一个认证令牌；验证失败时，返回错误信息。令牌应在后续请求中通过 `Authorization` 头传递，以访问受保护的资源。
+
+### 请求
+
+- **方法**：POST
+- **URL**：`/admin/login`
+- **Content-Type**：application/json
+- **请求体**：
+  ```json
+  {
+    "username": "string",
+    "password": "string"
+  }
+  ```
+  - `username`：管理员的用户名（必需，字符串）。
+  - `password`：管理员的密码（必需，字符串）。
+
+### 响应
+
+- **成功（200 OK）**：
+  - **Content-Type**：application/json
+  - **响应体**：
+    ```json
+    {
+      "token": "string"
+    }
+    ```
+  - `token`：用于身份验证的令牌（建议为 JWT），需在后续请求中通过 `Authorization: Bearer <token>` 头传递。
+
+- **失败（401 Unauthorized）**：
+  - **Content-Type**：application/json
+  - **响应体**：
+    ```json
+    {
+      "error": "invalid credentials"
+    }
+    ```
+  - `error`：描述认证失败原因的错误信息。
+
+### 示例
+
+#### 请求示例
+```http
+POST /admin/login HTTP/1.1
+Host: example.com
+Content-Type: application/json
+
+{
+  "username": "admin",
+  "password": "password123"
+}
+```
+
+#### 成功响应示例
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+}
+```
+
+#### 失败响应示例
+```http
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{
+  "error": "invalid credentials"
+}
+```
+
+## 实现考虑
+
+### SSM 框架集成
+- **Spring MVC**：使用 `@RestController` 和 `@PostMapping` 注解处理 `/admin/login` 请求，解析 JSON 请求体并返回 JSON 响应。
+- **MyBatis**：通过 Mapper 接口查询数据库，验证用户名和密码。建议使用哈希密码存储（如 BCrypt），并在服务层比较哈希值。
+- **Spring**：管理依赖注入，确保服务层和数据访问层的松耦合。
+
+### 认证机制
+建议使用 JWT 进行无状态认证，适合现代单页应用（SPA）或分离式前端架构。JWT 包含用户身份信息，服务器端无需维护会话状态。令牌应设置合理有效期（如 1 小时），并支持刷新机制。
+
+### 安全最佳实践
+- **HTTPS**：所有请求和响应必须通过 HTTPS 传输，以防止数据被拦截。
+- **密码存储**：密码应使用安全的哈希算法（如 BCrypt）存储，永不以明文形式保存。
+- **错误信息**：避免泄露具体错误细节（如“用户名不存在”），统一返回“invalid credentials”以防止用户名枚举攻击。
+- **令牌安全**：JWT 应使用强密钥签名，并定期轮换密钥。考虑实现令牌黑名单机制以支持注销功能。
+- **速率限制**：为防止暴力破解攻击，建议对登录端点实施速率限制。
+
+### 数据库交互
+假设数据库中有一个 `users` 表，包含以下字段：
+
+| 字段名      | 类型     | 描述                     |
+|-------------|----------|--------------------------|
+| id          | BIGINT   | 主键，自增               |
+| username    | VARCHAR  | 用户名，唯一             |
+| password    | VARCHAR  | 哈希密码                 |
+| role        | VARCHAR  | 角色（如 admin）         |
+
+MyBatis Mapper 示例：
+```xml
+<select id="findByUsername" resultType="User">
+  SELECT * FROM users WHERE username = #{username}
+</select>
+```
+
+### 后续请求
+成功登录后，前端应将返回的令牌存储（建议使用安全的客户端存储，如 HttpOnly cookie 或安全的 localStorage），并在访问受保护端点（如 `/admin/articles`）时包含在请求头中：
+```http
+Authorization: Bearer <token>
+```
+
+## 扩展功能
+虽然本次仅设计登录接口，但管理后台可能需要以下相关接口：
+- **注销接口**：使当前令牌失效。
+- **令牌刷新接口**：延长会话有效期。
+- **密码重置接口**：允许管理员重置密码。
+
+这些接口可根据需求进一步设计，确保与登录接口一致的 RESTful 风格和安全标准。
+
+## 参考资料
+本设计参考了 REST API 安全最佳实践和 Spring 框架的常见实现方式，确保接口简单、安全且易于集成。

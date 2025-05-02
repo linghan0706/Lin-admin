@@ -1,0 +1,785 @@
+<script type="text/javascript">
+  var gk_isXlsx = false
+  var gk_xlsxFileLookup = {}
+  var gk_fileData = {}
+  function filledCell(cell) {
+    return cell !== '' && cell != null
+  }
+  function loadFileData(filename) {
+    if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+      try {
+        var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' })
+        var firstSheetName = workbook.SheetNames[0]
+        var worksheet = workbook.Sheets[firstSheetName]
+
+        // Convert sheet to JSON to filter blank rows
+        var jsonData = XLSX.utils.sheet_to_json(worksheet, {
+          header: 1,
+          blankrows: false,
+          defval: ''
+        })
+        // Filter out blank rows (rows where all cells are empty, null, or undefined)
+        var filteredData = jsonData.filter((row) => row.some(filledCell))
+
+        // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+        var headerRowIndex = filteredData.findIndex(
+          (row, index) =>
+            row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+        )
+        // Fallback
+        if (headerRowIndex === -1 || headerRowIndex > 25) {
+          headerRowIndex = 0
+        }
+
+        // Convert filtered JSON back to CSV
+        var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)) // Create a new sheet from filtered array of arrays
+        csv = XLSX.utils.sheet_to_csv(csv, { header: 1 })
+        return csv
+      } catch (e) {
+        console.error(e)
+        return ''
+      }
+    }
+    return gk_fileData[filename] || ''
+  }
+</script>
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>API 测试页面</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+  </head>
+  <body>
+    <div id="app" class="max-w-2xl mx-auto p-6 bg-white border border-gray-200">
+      <!-- Base URL configuration -->
+      <div class="mb-6">
+        <label for="base-url" class="block text-xs font-semibold text-gray-800 mb-1"
+          >API 基础 URL</label
+        >
+        <input
+          type="text"
+          id="base-url"
+          v-model="baseUrl"
+          class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-3 py-2 text-sm text-gray-900"
+        />
+        <button
+          @click="saveBaseUrl"
+          class="mt-3 w-full bg-blue-600 hover:bg-blue-700 text-white font-semibold py-2 transition-colors"
+          >保存</button
+        >
+      </div>
+      <!-- Navigation -->
+      <nav class="mb-6 flex gap-4 border-b border-gray-200 pb-2">
+        <router-link to="/public" class="text-blue-600 hover:underline px-1">公共 API</router-link>
+        <router-link to="/admin" class="text-blue-600 hover:underline px-1">管理员 API</router-link>
+        <router-link to="/files" class="text-blue-600 hover:underline px-1">文件上传</router-link>
+      </nav>
+      <!-- Router View -->
+      <router-view></router-view>
+    </div>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/vue-router@4/dist/vue-router.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <script>
+      const { createApp, ref, computed } = Vue
+      const PublicView = {
+        inject: ['baseUrl'],
+        template: `
+        <div>
+          <h2 class="text-base font-bold mb-4 text-gray-900 border-l-4 border-blue-500 pl-2 bg-gray-50">公共 API</h2>
+          <div v-for="api in publicApis" :key="api.endpoint" class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">{{ api.method }} <span class="text-gray-500">{{ api.endpoint }}</span></h3>
+            <div v-if="api.params.length > 0" class="flex flex-col gap-2 mb-2">
+              <div v-for="param in api.params" :key="param.name">
+                <label :for="param.name" class="block text-xs text-gray-600 mb-1">{{ param.name }}</label>
+                <input :type="param.type === 'number' ? 'number' : 'text'" :id="param.name" v-model="paramValues[api.endpoint][param.name]" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+              </div>
+            </div>
+            <button @click="sendRequest(api)" class="mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 w-full transition-colors">发送</button>
+            <div v-if="responses[api.endpoint]" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ responses[api.endpoint] }}</pre>
+            </div>
+          </div>
+        </div>
+      `,
+        data() {
+          return {
+            publicApis: [
+              {
+                endpoint: '/articles',
+                method: 'GET',
+                params: [
+                  { name: '页码', type: 'number', default: 1 },
+                  { name: '每页数量', type: 'number', default: 10 }
+                ]
+              },
+              {
+                endpoint: '/articles/:id',
+                method: 'GET',
+                params: [{ name: 'ID', type: 'number' }]
+              },
+              {
+                endpoint: '/tools',
+                method: 'GET',
+                params: []
+              }
+            ],
+            paramValues: {
+              '/articles': { 页码: 1, 每页数量: 10 },
+              '/articles/:id': { ID: '' },
+              '/tools': {}
+            },
+            responses: {}
+          }
+        },
+        methods: {
+          async sendRequest(api) {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            let url = this.baseUrl + api.endpoint
+            const params = this.paramValues[api.endpoint]
+            if (api.endpoint.includes(':id')) {
+              const id = params['ID']
+              if (!id) {
+                alert('请提供 ID。')
+                return
+              }
+              url = url.replace(':id', id)
+            }
+            if (api.endpoint === '/articles') {
+              url += `?page=${params['页码']}&size=${params['每页数量']}`
+            }
+            try {
+              const response = await axios({
+                method: api.method,
+                url: url
+              })
+              this.responses[api.endpoint] = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              this.responses[api.endpoint] = `错误: ${error.message}`
+            }
+          }
+        }
+      }
+      const AdminView = {
+        inject: ['baseUrl'],
+        template: `
+        <div>
+          <h2 class="text-base font-bold mb-4 text-gray-900 border-l-4 border-blue-500 pl-2 bg-gray-50">管理员 API</h2>
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">登录</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <label for="username" class="block text-xs text-gray-600 mb-1">用户名</label>
+              <input type="text" id="username" v-model="username" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+              <label for="password" class="block text-xs text-gray-600 mb-1">密码</label>
+              <input type="password" id="password" v-model="password" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+            </div>
+            <button @click="login" class="mt-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 w-full transition-colors">登录</button>
+            <div v-if="loginMessage" class="mt-2 text-red-500 text-xs">{{ loginMessage }}</div>
+          </div>
+          <div v-for="api in adminApis" :key="api.key" class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">{{ api.method }} <span class="text-gray-500">{{ api.endpoint }}</span></h3>
+            <div v-if="api.params && api.params.length > 0" class="flex flex-col gap-2 mb-2">
+              <div v-for="param in api.params" :key="param.name">
+                <label :for="param.name" class="block text-xs text-gray-600 mb-1">{{ param.name }}</label>
+                <input :type="param.type === 'number' ? 'number' : 'text'" :id="param.name" v-model="paramValues[api.key][param.name]" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+              </div>
+            </div>
+            <div v-if="api.body" class="mb-2">
+              <label for="body" class="block text-xs text-gray-600 mb-1">请求体 (JSON)</label>
+              <textarea id="body" v-model="bodyValues[api.key]" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900" rows="4"></textarea>
+            </div>
+            <button @click="sendRequest(api)" class="mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 w-full transition-colors">发送</button>
+            <div v-if="responses[api.key]" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ responses[api.key] }}</pre>
+            </div>
+          </div>
+        </div>
+      `,
+        data() {
+          return {
+            username: '',
+            password: '',
+            token: null,
+            loginMessage: '',
+            adminApis: [
+              {
+                endpoint: '/admin/articles',
+                method: 'GET',
+                requiresAuth: true,
+                params: [],
+                body: null,
+                key: '/admin/articlesGET'
+              },
+              {
+                endpoint: '/admin/articles/:id',
+                method: 'GET',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: null,
+                key: '/admin/articles/:idGET'
+              },
+              {
+                endpoint: '/admin/articles',
+                method: 'POST',
+                requiresAuth: true,
+                params: [],
+                body: true,
+                key: '/admin/articlesPOST'
+              },
+              {
+                endpoint: '/admin/articles/:id',
+                method: 'PUT',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: true,
+                key: '/admin/articles/:idPUT'
+              },
+              {
+                endpoint: '/admin/articles/:id',
+                method: 'DELETE',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: null,
+                key: '/admin/articles/:idDELETE'
+              },
+              {
+                endpoint: '/admin/articles/:id/publish',
+                method: 'PUT',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: null,
+                key: '/admin/articles/:id/publishPUT'
+              },
+              {
+                endpoint: '/admin/articles/:id/archive',
+                method: 'PUT',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: null,
+                key: '/admin/articles/:id/archivePUT'
+              },
+              {
+                endpoint: '/admin/articles/stats',
+                method: 'GET',
+                requiresAuth: true,
+                params: [],
+                body: null,
+                key: '/admin/articles/statsGET'
+              },
+              {
+                endpoint: '/admin/articles/batch',
+                method: 'DELETE',
+                requiresAuth: true,
+                params: [],
+                body: true,
+                key: '/admin/articles/batchDELETE'
+              },
+              {
+                endpoint: '/admin/tools',
+                method: 'GET',
+                requiresAuth: true,
+                params: [],
+                body: null,
+                key: '/admin/toolsGET'
+              },
+              {
+                endpoint: '/admin/tools/:id',
+                method: 'GET',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: null,
+                key: '/admin/tools/:idGET'
+              },
+              {
+                endpoint: '/admin/tools',
+                method: 'POST',
+                requiresAuth: true,
+                params: [],
+                body: true,
+                key: '/admin/toolsPOST'
+              },
+              {
+                endpoint: '/admin/tools/:id',
+                method: 'PUT',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: true,
+                key: '/admin/tools/:idPUT'
+              },
+              {
+                endpoint: '/admin/tools/:id',
+                method: 'DELETE',
+                requiresAuth: true,
+                params: [{ name: 'ID', type: 'number' }],
+                body: null,
+                key: '/admin/tools/:idDELETE'
+              }
+            ],
+            paramValues: {
+              '/admin/articlesGET': {},
+              '/admin/articles/:idGET': { ID: '' },
+              '/admin/articlesPOST': {},
+              '/admin/articles/:idPUT': { ID: '' },
+              '/admin/articles/:idDELETE': { ID: '' },
+              '/admin/articles/:id/publishPUT': { ID: '' },
+              '/admin/articles/:id/archivePUT': { ID: '' },
+              '/admin/articles/statsGET': {},
+              '/admin/articles/batchDELETE': {},
+              '/admin/toolsGET': {},
+              '/admin/tools/:idGET': { ID: '' },
+              '/admin/toolsPOST': {},
+              '/admin/tools/:idPUT': { ID: '' },
+              '/admin/tools/:idDELETE': { ID: '' }
+            },
+            bodyValues: {
+              '/admin/articlesPOST': JSON.stringify({
+                title: "文章标题",
+                summary: "摘要内容",
+                content: "正文内容",
+                status: "draft",
+                coverImage: "https://example.com/image.jpg",
+                tagIds: [1, 2]
+              }, null, 2),
+              '/admin/articles/:idPUT': JSON.stringify({
+                title: "更新标题",
+                summary: "更新摘要",
+                content: "更新内容",
+                status: "published",
+                coverImage: "https://example.com/updated.jpg",
+                tagIds: [1, 3]
+              }, null, 2),
+              '/admin/articles/batchDELETE': JSON.stringify({
+                ids: [1, 2, 3]
+              }, null, 2),
+              '/admin/toolsPOST': JSON.stringify({
+                name: "新工具",
+                description: "工具描述",
+                price: 99.99
+              }, null, 2),
+              '/admin/tools/:idPUT': JSON.stringify({
+                name: "更新工具",
+                description: "更新描述",
+                price: 88.88
+              }, null, 2)
+            },
+            responses: {}
+          }
+        },
+        methods: {
+          async login() {
+            if (!this.baseUrl) {
+              this.loginMessage = '请先设置基础 URL。'
+              return
+            }
+            try {
+              const response = await axios.post(this.baseUrl + '/admin/login', {
+                username: this.username,
+                password: this.password
+              })
+              if (response.data.code === 200) {
+                this.token = response.data.data.token
+                this.loginMessage = '登录成功。'
+              } else {
+                this.loginMessage = response.data.message
+              }
+            } catch (error) {
+              this.loginMessage = `错误: ${error.message}`
+            }
+          },
+          async sendRequest(api) {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            if (api.requiresAuth && !this.token) {
+              alert('请先登录。')
+              return
+            }
+            let url = this.baseUrl + api.endpoint
+            const params = this.paramValues[api.key]
+            if (api.endpoint.includes(':id')) {
+              const id = params['ID']
+              if (!id) {
+                alert('请提供 ID。')
+                return
+              }
+              url = url.replace(':id', id)
+            }
+            const config = {
+              method: api.method,
+              url: url
+            }
+            if (api.requiresAuth) {
+              config.headers = {
+                Authorization: `Bearer ${this.token}`
+              }
+            }
+            if (api.body) {
+              try {
+                const body = JSON.parse(this.bodyValues[api.key])
+                config.data = body
+              } catch (e) {
+                alert('请求体 JSON 格式无效。')
+                return
+              }
+            }
+            try {
+              console.log('发送请求:', config)
+              const response = await axios(config)
+              this.responses[api.key] = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              console.error('请求失败:', error)
+              this.responses[api.key] = `错误: ${error.message}`
+              if (error.response) {
+                this.responses[api.key] += `\n\n状态码: ${error.response.status}\n响应数据: ${JSON.stringify(error.response.data, null, 2)}`
+              }
+            }
+          }
+        }
+      }
+      
+      const FilesView = {
+        inject: ['baseUrl'],
+        template: `
+        <div>
+          <h2 class="text-base font-bold mb-4 text-gray-900 border-l-4 border-blue-500 pl-2 bg-gray-50">文件上传 API</h2>
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">登录</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <label for="username-file" class="block text-xs text-gray-600 mb-1">用户名</label>
+              <input type="text" id="username-file" v-model="username" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+              <label for="password-file" class="block text-xs text-gray-600 mb-1">密码</label>
+              <input type="password" id="password-file" v-model="password" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+            </div>
+            <button @click="login" class="mt-2 bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 w-full transition-colors">登录</button>
+            <div v-if="loginMessage" class="mt-2 text-red-500 text-xs">{{ loginMessage }}</div>
+          </div>
+          
+          <!-- 基本图片上传 -->
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">基本图片上传</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <label for="upload-file" class="block text-xs text-gray-600 mb-1">选择图片文件</label>
+              <input type="file" id="upload-file" ref="fileInput" accept="image/jpeg,image/png" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+            </div>
+            <button @click="uploadFile" class="mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 w-full transition-colors">上传</button>
+            <div v-if="uploadResponse" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ uploadResponse }}</pre>
+            </div>
+          </div>
+          
+          <!-- 带元数据的图片上传 -->
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">带元数据的图片上传</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <label for="upload-file-metadata" class="block text-xs text-gray-600 mb-1">选择图片文件</label>
+              <input type="file" id="upload-file-metadata" ref="fileInputMetadata" accept="image/jpeg,image/png" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+            </div>
+            <button @click="uploadFileWithMetadata" class="mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 w-full transition-colors">上传并提取元数据</button>
+            <div v-if="uploadMetadataResponse" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ uploadMetadataResponse }}</pre>
+            </div>
+          </div>
+          
+          <!-- 图片信息查询 -->
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">获取图片信息</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <label for="image-id" class="block text-xs text-gray-600 mb-1">图片ID</label>
+              <input type="number" id="image-id" v-model="imageId" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+            </div>
+            <button @click="getImageInfo" class="mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 w-full transition-colors">查询</button>
+            <div v-if="imageInfoResponse" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ imageInfoResponse }}</pre>
+            </div>
+          </div>
+          
+          <!-- 图片列表查询 -->
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">图片列表查询</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <div class="flex gap-4">
+                <div class="flex-1">
+                  <label for="page" class="block text-xs text-gray-600 mb-1">页码</label>
+                  <input type="number" id="page" v-model="page" min="1" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+                </div>
+                <div class="flex-1">
+                  <label for="size" class="block text-xs text-gray-600 mb-1">每页条数</label>
+                  <input type="number" id="size" v-model="size" min="1" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+                </div>
+              </div>
+            </div>
+            <button @click="getImageList" class="mt-2 bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 w-full transition-colors">查询列表</button>
+            <div v-if="imageListResponse" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ imageListResponse }}</pre>
+            </div>
+          </div>
+          
+          <!-- 删除图片 -->
+          <div class="mb-8 border-b border-gray-100 pb-6">
+            <h3 class="text-sm font-semibold text-gray-800 mb-2">删除图片</h3>
+            <div class="flex flex-col gap-2 mb-2">
+              <label for="delete-image-id" class="block text-xs text-gray-600 mb-1">图片ID</label>
+              <input type="number" id="delete-image-id" v-model="deleteImageId" class="block w-full border border-gray-300 bg-gray-50 focus:bg-white focus:border-blue-500 outline-none px-2 py-1 text-sm text-gray-900">
+            </div>
+            <button @click="deleteImage" class="mt-2 bg-red-600 hover:bg-red-700 text-white font-semibold px-4 py-2 w-full transition-colors">删除</button>
+            <div v-if="deleteResponse" class="mt-4 bg-gray-50 border border-gray-200 rounded-none p-3">
+              <pre class="text-xs text-gray-700">{{ deleteResponse }}</pre>
+            </div>
+          </div>
+        </div>
+      `,
+        data() {
+          return {
+            username: '',
+            password: '',
+            token: null,
+            loginMessage: '',
+            imageId: '',
+            deleteImageId: '',
+            page: 1,
+            size: 10,
+            uploadResponse: null,
+            uploadMetadataResponse: null,
+            imageInfoResponse: null,
+            imageListResponse: null,
+            deleteResponse: null
+          }
+        },
+        methods: {
+          async login() {
+            if (!this.baseUrl) {
+              this.loginMessage = '请先设置基础 URL。'
+              return
+            }
+            try {
+              const response = await axios.post(this.baseUrl + '/admin/login', {
+                username: this.username,
+                password: this.password
+              })
+              if (response.data.code === 200) {
+                this.token = response.data.data.token
+                this.loginMessage = '登录成功。'
+              } else {
+                this.loginMessage = response.data.message
+              }
+            } catch (error) {
+              this.loginMessage = `错误: ${error.message}`
+            }
+          },
+          async uploadFile() {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            if (!this.token) {
+              alert('请先登录。')
+              return
+            }
+            
+            const fileInput = this.$refs.fileInput
+            if (!fileInput.files || fileInput.files.length === 0) {
+              alert('请选择文件。')
+              return
+            }
+            
+            const file = fileInput.files[0]
+            const formData = new FormData()
+            formData.append('file', file)
+            
+            try {
+              const response = await axios.post(
+                this.baseUrl + '/admin/files/upload/image',
+                formData,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'multipart/form-data'
+                  }
+                }
+              )
+              this.uploadResponse = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              this.uploadResponse = `错误: ${error.message}`
+              if (error.response) {
+                this.uploadResponse += `\n\n状态码: ${error.response.status}\n响应数据: ${JSON.stringify(error.response.data, null, 2)}`
+              }
+            }
+          },
+          async uploadFileWithMetadata() {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            if (!this.token) {
+              alert('请先登录。')
+              return
+            }
+            
+            const fileInput = this.$refs.fileInputMetadata
+            if (!fileInput.files || fileInput.files.length === 0) {
+              alert('请选择文件。')
+              return
+            }
+            
+            const file = fileInput.files[0]
+            const formData = new FormData()
+            formData.append('file', file)
+            
+            try {
+              const response = await axios.post(
+                this.baseUrl + '/admin/files/upload/image/with-metadata',
+                formData,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${this.token}`,
+                    'Content-Type': 'multipart/form-data'
+                  }
+                }
+              )
+              this.uploadMetadataResponse = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              this.uploadMetadataResponse = `错误: ${error.message}`
+              if (error.response) {
+                this.uploadMetadataResponse += `\n\n状态码: ${error.response.status}\n响应数据: ${JSON.stringify(error.response.data, null, 2)}`
+              }
+            }
+          },
+          async getImageInfo() {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            if (!this.token) {
+              alert('请先登录。')
+              return
+            }
+            if (!this.imageId) {
+              alert('请输入图片ID。')
+              return
+            }
+            
+            try {
+              const response = await axios.get(
+                `${this.baseUrl}/admin/files/image/${this.imageId}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${this.token}`
+                  }
+                }
+              )
+              this.imageInfoResponse = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              this.imageInfoResponse = `错误: ${error.message}`
+              if (error.response) {
+                this.imageInfoResponse += `\n\n状态码: ${error.response.status}\n响应数据: ${JSON.stringify(error.response.data, null, 2)}`
+              }
+            }
+          },
+          async getImageList() {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            if (!this.token) {
+              alert('请先登录。')
+              return
+            }
+            
+            try {
+              const response = await axios.get(
+                `${this.baseUrl}/admin/files/images`,
+                {
+                  params: {
+                    page: this.page,
+                    size: this.size
+                  },
+                  headers: {
+                    'Authorization': `Bearer ${this.token}`
+                  }
+                }
+              )
+              this.imageListResponse = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              this.imageListResponse = `错误: ${error.message}`
+              if (error.response) {
+                this.imageListResponse += `\n\n状态码: ${error.response.status}\n响应数据: ${JSON.stringify(error.response.data, null, 2)}`
+              }
+            }
+          },
+          async deleteImage() {
+            if (!this.baseUrl) {
+              alert('请先设置基础 URL。')
+              return
+            }
+            if (!this.token) {
+              alert('请先登录。')
+              return
+            }
+            if (!this.deleteImageId) {
+              alert('请输入要删除的图片ID。')
+              return
+            }
+            
+            if (!confirm('确定要删除此图片吗？此操作不可恢复！')) {
+              return
+            }
+            
+            try {
+              const response = await axios.delete(
+                `${this.baseUrl}/admin/files/image/${this.deleteImageId}`,
+                {
+                  headers: {
+                    'Authorization': `Bearer ${this.token}`
+                  }
+                }
+              )
+              this.deleteResponse = JSON.stringify(response.data, null, 2)
+            } catch (error) {
+              this.deleteResponse = `错误: ${error.message}`
+              if (error.response) {
+                this.deleteResponse += `\n\n状态码: ${error.response.status}\n响应数据: ${JSON.stringify(error.response.data, null, 2)}`
+              }
+            }
+          }
+        }
+      }
+      
+      const routes = [
+        { path: '/public', component: PublicView },
+        { path: '/admin', component: AdminView },
+        { path: '/files', component: FilesView },
+        { path: '/', redirect: '/public' }
+      ]
+      const router = VueRouter.createRouter({
+        history: VueRouter.createWebHashHistory(),
+        routes
+      })
+      const app = createApp({
+        setup() {
+          const baseUrl = ref(localStorage.getItem('baseUrl') || '')
+          const saveBaseUrl = () => {
+            localStorage.setItem('baseUrl', baseUrl.value)
+            alert('基础 URL 已保存。')
+          }
+          return {
+            baseUrl,
+            saveBaseUrl
+          }
+        },
+        provide() {
+          return {
+            baseUrl: computed(() => this.baseUrl)
+          }
+        }
+      })
+      app.use(router)
+      app.mount('#app')
+    </script>
+  </body>
+</html>
