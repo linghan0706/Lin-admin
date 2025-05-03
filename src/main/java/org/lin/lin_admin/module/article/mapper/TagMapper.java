@@ -40,4 +40,12 @@ public interface TagMapper {
     
     @Select("SELECT tag_id FROM article_tags WHERE article_id = #{articleId}")
     List<Long> findTagIdsByArticleId(Long articleId);
+    
+    /**
+     * 检查标签是否被文章使用
+     * @param tagId 标签ID
+     * @return 使用该标签的文章数量
+     */
+    @Select("SELECT COUNT(*) FROM article_tags WHERE tag_id = #{tagId}")
+    int countArticlesByTagId(Long tagId);
 } 

@@ -110,4 +110,4 @@ curl -X POST http://localhost:8080/admin/login \
 
 ## 许可证
 
-[MIT License](LICENSE) #
+[MIT License](LICENSE)
